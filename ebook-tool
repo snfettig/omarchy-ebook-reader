@@ -189,13 +189,11 @@ def contains_supported_book(folder: Path, deadline: float | None = None) -> bool
 
 
 def default_library() -> str:
-    personal_books = Path.home() / "Books"
-    deadline = time.monotonic() + 1.0
-    if contains_supported_book(personal_books, deadline):
-        return str(personal_books)
-    if contains_supported_book(STARTER_LIBRARY_DIR, deadline):
-        return str(STARTER_LIBRARY_DIR)
-    return str(personal_books)
+    return str(Path.home() / "Documents" / "eBooks")
+
+
+def default_notes_folder() -> str:
+    return str(Path.home() / "Documents" / "eBookNotes")
 
 
 def default_settings() -> dict:
@@ -210,7 +208,7 @@ def default_settings() -> dict:
         "pageTurn": True,
         "showClock": False,
         "sort": "recent",
-        "notesFolder": "",
+        "notesFolder": default_notes_folder(),
         "notesMachineId": "",
     }
 

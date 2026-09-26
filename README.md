@@ -54,10 +54,7 @@ The starter editions are unmodified Standard Ebooks files. Their exact sources, 
 
 Leaf Reader reads books where they already live—there is no import process, and it never moves or modifies the original files.
 
-1. Left-click the Leaf Reader book icon in the Omarchy bar.
-2. Click the **Reader settings** gear in the upper-right corner.
-3. Under **Library folder**, click the folder button and choose the directory that contains your ebooks. You can also type or paste its full path and press `Enter`.
-4. Return to the library. Leaf Reader scans that folder and all of its subfolders, then adds every supported book it finds.
+The library folder defaults to `~/Documents/eBooks`. Leaf Reader scans that folder and all of its subfolders. To use a different directory, open Reader settings from the book icon and change **Library folder**.
 
 Keep any folder layout you like—books may sit together or be organized into author and title subfolders. When you add, remove, or replace files later, reopen the panel or click **Rescan library** to refresh the shelf. Choosing a different library folder does not delete reading progress or touch the previous folder.
 
@@ -92,7 +89,7 @@ Select a passage to highlight it. Pick a color, and add a note if you want one. 
 
 ## Highlights and notes
 
-Choose the notes folder in Reader settings, the same way you choose the library folder. Point it at a directory Syncthing already syncs, for example a folder on a Synology share. The book files stay where they are and are never modified.
+Highlights and notes default to `~/Documents/eBookNotes`. Point that folder at the directory Syncthing already syncs with your Synology, or choose another one in Reader settings. The book files stay where they are and are never modified.
 
 Each machine appends to its own file, `journal-<machine-id>.jsonl`. Two devices can highlight while offline and Syncthing will not have to merge a shared file. Leaf Reader reads every `journal-*.jsonl` in that folder, including a Syncthing conflict copy, and folds them into the highlights for a book. A book is identified by the SHA-256 of the EPUB bytes, so the same file on another computer matches even when the folder path differs.
 

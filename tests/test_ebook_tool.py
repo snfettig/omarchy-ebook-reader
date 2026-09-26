@@ -59,7 +59,7 @@ class LeafReaderTests(unittest.TestCase):
         leaf.INDEX_FILE = leaf.CACHE_DIR / "index.json"
         leaf.SERVER_FILE = leaf.STATE_DIR / "server.json"
         leaf.READER_FILE = leaf.STATE_DIR / "reader.json"
-        leaf.atomic_json(leaf.SETTINGS_FILE, {"libraryFolder": str(self.library)})
+        leaf.atomic_json(leaf.SETTINGS_FILE, {"libraryFolder": str(self.library), "notesFolder": ""})
 
     def tearDown(self):
         self.temp.cleanup()
@@ -253,18 +253,11 @@ class LeafReaderTests(unittest.TestCase):
         )
         self.assertEqual(book["author"], '<a href="file:///tmp/author">A. Reader</a>')
 
-    def test_fresh_install_prefers_personal_books_then_starter_library(self):
-        base = Path(self.temp.name)
-        home = base / "home"
-        personal = home / "Books"
-        starter = base / "starter-books"
-        starter.mkdir()
-        make_epub(starter / "Welcome.epub")
-        with mock.patch.object(leaf.Path, "home", return_value=home), \
-             mock.patch.object(leaf, "STARTER_LIBRARY_DIR", starter):
-            self.assertEqual(leaf.default_library(), str(starter))
-            make_epub(personal / "Mine.epub")
-            self.assertEqual(leaf.default_library(), str(personal))
+    def test_fresh_install_uses_documents_ebooks_and_notes(self):
+        home = Path(self.temp.name) / "home"
+        with mock.patch.object(leaf.Path, "home", return_value=home):
+            self.assertEqual(leaf.default_library(), str(home / "Documents" / "eBooks"))
+            self.assertEqual(leaf.default_notes_folder(), str(home / "Documents" / "eBookNotes"))
 
     def test_highlights_append_per_machine_and_fold_together(self):
         notes = Path(self.temp.name) / "Notes"
