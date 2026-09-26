@@ -211,6 +211,9 @@ input[type="range"] { width: 100%; accent-color: var(--accent); cursor: pointer;
 .highlight-actions { display: flex; gap: 8px; align-items: center; }
 .text-button { border: 0; background: transparent; color: var(--muted); cursor: pointer; padding: 8px; }
 .helper-copy { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.lookup-section { padding: 8px 0 18px; border-bottom: 1px solid var(--line); }
+.lookup-title { margin: 0 0 8px; font-family: "Noto Serif", ui-serif, serif; font-size: 22px; }
+.lookup-body { margin: 0 0 12px; white-space: pre-wrap; line-height: 1.55; }
 
 .setting-section { padding: 16px 0; border-bottom: 1px solid var(--line); }
 .setting-section > label { display: flex; justify-content: space-between; margin-bottom: 11px; font-size: 12px; font-weight: 750; }

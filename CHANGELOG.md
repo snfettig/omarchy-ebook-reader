@@ -5,6 +5,7 @@
 - Open PDF-only books in the Omarchy-provided Xournal++ application, retaining the Qt WebEngine viewer as a fallback
 - Save highlights and notes in a folder you choose, as one append-only journal per machine, so Syncthing can sync them without conflict copies
 - Default the library to `~/Documents/eBooks` and highlights to `~/Documents/eBookNotes`
+- Close the highlight menu with Escape, open the reader as a normal window, and look up a selection in a local dictionary and Grokipedia
 
 ## 1.1.5 — 2026-08-24
 

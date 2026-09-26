@@ -376,6 +376,34 @@ async function saveHighlight(event) {
   } catch (error) { toast(error.message); }
 }
 
+async function lookupSelection() {
+  const quote = (state.pendingQuote || "").trim();
+  if (!quote) return;
+  hideHighlightBar();
+  openDrawer("#lookupDrawer");
+  $("#lookupQuery").textContent = quote;
+  $("#dictionarySource").textContent = "Dictionary";
+  $("#dictionaryBody").textContent = "Looking up…";
+  $("#grokipediaTitle").textContent = "";
+  $("#grokipediaBody").textContent = "Looking up…";
+  $("#grokipediaOpen").hidden = true;
+  $("#grokipediaOpen").dataset.slug = "";
+  try {
+    const payload = await api("/api/lookup", { method: "POST", body: JSON.stringify({ quote }) });
+    const dictionary = payload.dictionary || {};
+    $("#dictionarySource").textContent = dictionary.source || "Dictionary";
+    $("#dictionaryBody").textContent = dictionary.text || "No local dictionary entry was found.";
+    const article = payload.grokipedia || {};
+    $("#grokipediaTitle").textContent = article.title || "";
+    $("#grokipediaBody").textContent = article.summary || "No Grokipedia article matched that selection.";
+    $("#grokipediaOpen").hidden = !article.slug;
+    $("#grokipediaOpen").dataset.slug = article.slug || "";
+  } catch (error) {
+    $("#dictionaryBody").textContent = "";
+    $("#grokipediaBody").textContent = error.message;
+  }
+}
+
 async function deleteHighlight() {
   if (!state.book || !state.editingId) return;
   try {
@@ -540,6 +568,7 @@ function handleKey(event) {
   if (event.ctrlKey || event.metaKey || event.altKey) return;
   if (event.key === "Escape") {
     event.preventDefault();
+    if (!$("#highlightBar").hidden) { hideHighlightBar(); return; }
     if (drawersOpen()) { closeDrawers(); chromeAwake(); }
     else toggleChrome();
     return;
@@ -593,6 +622,14 @@ function bindControls() {
   $("#highlightBar").addEventListener("submit", saveHighlight);
   $("#highlightCancel").addEventListener("click", hideHighlightBar);
   $("#highlightDelete").addEventListener("click", deleteHighlight);
+  $("#highlightLookup").addEventListener("click", lookupSelection);
+  $("#grokipediaOpen").addEventListener("click", async () => {
+    const slug = $("#grokipediaOpen").dataset.slug;
+    if (!slug) return;
+    try {
+      await api("/api/open-grokipedia", { method: "POST", body: JSON.stringify({ slug }) });
+    } catch (error) { toast(error.message); }
+  });
   $$("#highlightColors button").forEach(button => button.addEventListener("click", () => setHighlightColor(button.dataset.color)));
   setHighlightColor("yellow");
   $("#appearanceButton").addEventListener("click", () => openDrawer("#appearanceDrawer"));

@@ -15,7 +15,7 @@ QQC.ApplicationWindow {
   }
 
   visible: true
-  visibility: Window.Maximized
+  visibility: Window.Windowed
   minimumWidth: 720
   minimumHeight: 540
   width: 1440
@@ -39,7 +39,7 @@ QQC.ApplicationWindow {
   Shortcut {
     sequence: "F11"
     context: Qt.ApplicationShortcut
-    onActivated: window.visibility === Window.FullScreen ? window.showMaximized() : window.showFullScreen()
+    onActivated: window.visibility = window.visibility === Window.FullScreen ? Window.Windowed : Window.FullScreen
   }
 
   header: QQC.ToolBar {
@@ -98,7 +98,7 @@ QQC.ApplicationWindow {
       WindowButton {
         glyph: window.visibility === Window.FullScreen ? "❐" : "□"
         tip: window.visibility === Window.FullScreen ? "Leave fullscreen · F11" : "Fullscreen · F11"
-        onClicked: window.visibility = window.visibility === Window.FullScreen ? Window.Maximized : Window.FullScreen
+        onClicked: window.visibility = window.visibility === Window.FullScreen ? Window.Windowed : Window.FullScreen
       }
       WindowButton { glyph: "×"; tip: "Close reader · Ctrl+Shift+Q"; onClicked: window.close() }
     }

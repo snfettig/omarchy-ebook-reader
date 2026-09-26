@@ -80,12 +80,14 @@ Your books are never touched. Disabling or removing the widget closes its reader
 - `N`: highlights and notes
 - `A`: reading appearance
 - `L`: library
-- `Esc`: show or hide the reader controls, or close an open drawer
+- `Esc`: close the highlight menu, then an open drawer, then show or hide the reader controls
 - `Ctrl+Shift+Q`: close the reading window
 
 Reader controls fade away while you read and return on pointer movement, a click/tap in the reading area, or `Esc`. Keyboard and edge-click page turns do not make them flash back on.
 
-Select a passage to highlight it. Pick a color, and add a note if you want one. `N` lists every highlight in the open book. Highlights are stored for EPUB books. PDF annotation stays in Xournal++.
+Select a passage to highlight it. Pick a color, and add a note if you want one. `Esc` closes that menu. **Look up** checks a local dictionary and shows the matching Grokipedia article. `N` lists every highlight in the open book. Highlights are stored for EPUB books. PDF annotation stays in Xournal++.
+
+The reader opens as a normal window. `F11` still switches fullscreen.
 
 ## Highlights and notes
 

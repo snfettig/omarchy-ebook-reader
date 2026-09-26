@@ -299,6 +299,49 @@ class LeafReaderTests(unittest.TestCase):
         self.assertTrue(link.is_symlink())
         self.assertEqual(len(leaf.journal_files(notes)), 2)
 
+    def test_reader_is_focused_without_fullscreen(self):
+        calls = []
+
+        def run(args, **kwargs):
+            calls.append(args)
+            if args[1:3] == ["clients", "-j"]:
+                return mock.Mock(returncode=0, stdout='[{"pid": 42, "class": "leaf"}]')
+            return mock.Mock(returncode=0, stdout="ok")
+
+        with mock.patch.object(leaf.shutil, "which", return_value="/usr/bin/hyprctl"), \
+             mock.patch.dict(leaf.os.environ, {"HYPRLAND_INSTANCE_SIGNATURE": "sig"}), \
+             mock.patch.object(leaf.subprocess, "run", side_effect=run), \
+             mock.patch.object(leaf.time, "sleep"):
+            self.assertTrue(leaf.activate_reader(42))
+        text = " ".join(" ".join(args) for args in calls)
+        self.assertIn("focus", text)
+        self.assertNotIn("fullscreen", text)
+
+    def test_lookup_uses_local_dictionary_and_grokipedia(self):
+        leaf.CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        (leaf.CACHE_DIR / "webster.json").write_text(
+            json.dumps({"Epistemology": "The study of knowledge."}), encoding="utf-8",
+        )
+        leaf._WEBSTER_CACHE.clear()
+        with mock.patch.object(leaf.shutil, "which", return_value=None):
+            local = leaf.lookup_dictionary("epistemology")
+        self.assertEqual(local["source"], "Webster’s dictionary")
+        self.assertIn("knowledge", local["text"])
+
+        def fake_fetch(url):
+            if "full-text-search" in url:
+                return {"results": [{"slug": "Epistemology", "title": "Epistemology", "snippet": "short"}]}
+            return {"page": {"title": "Epistemology", "content": "# Epistemology\n\nIt studies [knowledge](/page/Knowledge)."}}
+
+        with mock.patch.object(leaf, "fetch_json", side_effect=fake_fetch), \
+             mock.patch.object(leaf.shutil, "which", return_value=None):
+            result = leaf.lookup_passage("epistemology")
+        self.assertEqual(result["grokipedia"]["slug"], "Epistemology")
+        self.assertIn("knowledge", result["grokipedia"]["summary"])
+        self.assertNotIn("](", result["grokipedia"]["summary"])
+        with self.assertRaises(ValueError):
+            leaf.open_grokipedia("../etc/passwd")
+
     def test_highlights_require_a_real_notes_folder(self):
         make_epub(self.library / "Book.epub")
         book = leaf.scan_library()[0]

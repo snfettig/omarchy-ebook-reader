@@ -89,6 +89,23 @@
       </section>
     </aside>
 
+    <aside id="lookupDrawer" class="drawer" aria-label="Dictionary and Grokipedia" aria-hidden="true">
+      <div class="drawer-header">
+        <div><span class="eyebrow">SELECTED TEXT</span><h1 id="lookupQuery">Lookup</h1></div>
+        <button class="icon-button close-drawer" aria-label="Close lookup">×</button>
+      </div>
+      <section class="lookup-section">
+        <div class="section-title"><span id="dictionarySource">Dictionary</span></div>
+        <p id="dictionaryBody" class="lookup-body">Select a word or phrase.</p>
+      </section>
+      <section class="lookup-section">
+        <div class="section-title"><span>Grokipedia</span></div>
+        <h2 id="grokipediaTitle" class="lookup-title"></h2>
+        <p id="grokipediaBody" class="lookup-body"></p>
+        <button type="button" id="grokipediaOpen" class="primary-button" hidden>Open article</button>
+      </section>
+    </aside>
+
     <aside id="notesDrawer" class="drawer" aria-label="Highlights and notes" aria-hidden="true">
       <div class="drawer-header">
         <div><span class="eyebrow">IN THIS BOOK</span><h1>Notes</h1></div>
@@ -186,6 +203,7 @@
       <textarea id="highlightNote" rows="3" maxlength="8000" placeholder="Add a note, if you want one"></textarea>
       <div class="highlight-actions">
         <button type="submit" id="highlightSave" class="primary-button">Save highlight</button>
+        <button type="button" id="highlightLookup" class="text-button">Look up</button>
         <button type="button" id="highlightDelete" class="text-button">Remove</button>
         <button type="button" id="highlightCancel" class="text-button">Cancel</button>
       </div>

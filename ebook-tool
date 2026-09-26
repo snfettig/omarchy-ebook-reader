@@ -21,7 +21,9 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.error
 import urllib.parse
+import urllib.request
 import zipfile
 from datetime import datetime, timezone
 from http import HTTPStatus
@@ -1467,6 +1469,20 @@ class ReaderHandler(BaseHTTPRequestHandler):
                 return
             self.send_json({"ok": True, "notesReady": True, "highlights": highlights})
             return
+        if route == "/api/lookup":
+            try:
+                self.send_json(lookup_passage(payload.get("quote", "")))
+            except ValueError as error:
+                self.send_json({"ok": False, "error": str(error)}, 422)
+            return
+        if route == "/api/open-grokipedia":
+            try:
+                open_grokipedia(bounded_text(payload.get("slug"), 180))
+            except ValueError as error:
+                self.send_json({"ok": False, "error": str(error)}, 422)
+                return
+            self.send_json({"ok": True})
+            return
         if route == "/api/settings":
             allowed = {"fontSize", "fontFamily", "lineHeight", "pageWidth", "theme", "flow", "pageTurn", "showClock", "sort"}
             save_settings({k: v for k, v in payload.items() if k in allowed})
@@ -1605,6 +1621,194 @@ def stop_runtime(reader_only: bool = False, server_only: bool = False, server_pi
     return {"ok": True, "readerStopped": stopped_reader, "serverStopped": stopped_server}
 
 
+WEBSTER_URL = "https://raw.githubusercontent.com/adambom/dictionary/master/dictionary.json"
+MAX_WEBSTER_BYTES = 12 * 1024 * 1024
+MAX_LOOKUP_CHARS = 160
+MAX_REMOTE_BYTES = 2 * 1024 * 1024
+_WEBSTER_CACHE: dict[str, dict[str, str]] = {}
+GROKIPEDIA_SLUG = re.compile(r"^[A-Za-z0-9_().,'%:+-]{1,180}$")
+
+
+def clean_lookup_term(value: object) -> str:
+    text = bounded_text(value, MAX_LOOKUP_CHARS).strip()
+    text = re.sub(r"\s+", " ", text)
+    return text.strip(".,;:!?\"'“”‘’()[]{}")
+
+
+def command_text(command: list[str]) -> str:
+    try:
+        run = subprocess.run(command, capture_output=True, text=True, timeout=4)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    if run.returncode != 0:
+        return ""
+    return bounded_text(run.stdout, 4000).strip()
+
+
+def tool_dictionary(term: str) -> tuple[str, str]:
+    if shutil.which("wn"):
+        text = command_text(["wn", term, "-over"])
+        if text:
+            return "WordNet", text
+    if shutil.which("dict"):
+        text = command_text(["dict", "-h", "127.0.0.1", term])
+        if text and "No definitions found" not in text:
+            return "Local dictd", text
+    if shutil.which("sdcv"):
+        text = command_text(["sdcv", "-n", "--utf8-output", term])
+        if text and "Nothing similar to" not in text:
+            return "StarDict", text
+    return "", ""
+
+
+def load_webster() -> dict[str, str]:
+    path = CACHE_DIR / "webster.json"
+    try:
+        info = path.stat()
+    except OSError:
+        return {}
+    if info.st_size > MAX_WEBSTER_BYTES:
+        return {}
+    key = f"{path}:{info.st_mtime_ns}:{info.st_size}"
+    cached = _WEBSTER_CACHE.get(key)
+    if cached is not None:
+        return cached
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, UnicodeError):
+        return {}
+    if not isinstance(loaded, dict):
+        return {}
+    words = {
+        str(word).casefold(): bounded_text(definition, 2000)
+        for word, definition in loaded.items()
+        if isinstance(word, str) and isinstance(definition, str) and definition.strip()
+    }
+    _WEBSTER_CACHE.clear()
+    _WEBSTER_CACHE[key] = words
+    return words
+
+
+def ensure_webster() -> None:
+    path = CACHE_DIR / "webster.json"
+    try:
+        if path.is_file() and 0 < path.stat().st_size <= MAX_WEBSTER_BYTES:
+            return
+    except OSError:
+        return
+    try:
+        private_directory(CACHE_DIR)
+        request = urllib.request.Request(WEBSTER_URL, headers={"User-Agent": "LeafReader"})
+        with urllib.request.urlopen(request, timeout=20) as response:
+            data = response.read(MAX_WEBSTER_BYTES + 1)
+        if len(data) > MAX_WEBSTER_BYTES or not data.startswith(b"{"):
+            return
+        json.loads(data)
+    except (OSError, ValueError, urllib.error.URLError):
+        return
+    temporary = path.with_suffix(".json.part")
+    temporary.write_bytes(data)
+    temporary.replace(path)
+
+
+def webster_text(term: str) -> str:
+    ensure_webster()
+    words = load_webster()
+    if not words:
+        return ""
+    folded = term.casefold()
+    if folded in words:
+        return words[folded]
+    parts = [part for part in re.split(r"[^A-Za-z'-]+", term) if part]
+    found = [f"{part}: {words[part.casefold()]}" for part in parts[:4] if part.casefold() in words]
+    return "\n\n".join(found)
+
+
+def lookup_dictionary(term: str) -> dict:
+    source, text = tool_dictionary(term)
+    if not text:
+        text = webster_text(term)
+        source = "Webster’s dictionary" if text else ""
+    if not text:
+        return {"available": False, "source": "", "text": "No local dictionary entry was found."}
+    return {"available": True, "source": source, "text": text}
+
+
+def fetch_json(url: str) -> dict:
+    request = urllib.request.Request(url, headers={"User-Agent": "LeafReader", "Accept": "application/json"})
+    with urllib.request.urlopen(request, timeout=8) as response:
+        data = response.read(MAX_REMOTE_BYTES + 1)
+    if len(data) > MAX_REMOTE_BYTES:
+        raise ValueError("The reference was too large")
+    loaded = json.loads(data)
+    if not isinstance(loaded, dict):
+        raise ValueError("The reference was not usable")
+    return loaded
+
+
+def plain_summary(markdown: str) -> str:
+    text = re.sub(r"!\[[^\]]*]\([^)]*\)", "", markdown)
+    text = re.sub(r"\[([^\]]+)]\([^)]*\)", r"\1", text)
+    text = re.sub(r"\[\]\([^)]*\)", "", text)
+    text = re.sub(r"^#+\s*", "", text, flags=re.MULTILINE)
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) > 900:
+        text = text[:900].rsplit(" ", 1)[0] + "…"
+    return text
+
+
+def lookup_grokipedia(term: str) -> dict:
+    empty = {"found": False, "title": "", "summary": "", "url": "", "slug": ""}
+    try:
+        found = fetch_json(
+            "https://grokipedia.com/api/full-text-search?"
+            + urllib.parse.urlencode({"query": term, "limit": 1, "offset": 0})
+        )
+    except (OSError, ValueError, urllib.error.URLError):
+        return empty
+    results = found.get("results")
+    if not isinstance(results, list) or not results or not isinstance(results[0], dict):
+        return empty
+    top = results[0]
+    slug = top.get("slug") if isinstance(top.get("slug"), str) else ""
+    if not GROKIPEDIA_SLUG.fullmatch(slug):
+        slug = ""
+    title = bounded_text(top.get("title"), 200, term)
+    summary = bounded_text(top.get("snippet"), 500)
+    if slug:
+        try:
+            preview = fetch_json(
+                "https://grokipedia.com/api/page-preview?" + urllib.parse.urlencode({"slug": slug})
+            )
+            page = preview.get("page") if isinstance(preview.get("page"), dict) else {}
+            title = bounded_text(page.get("title"), 200, title)
+            body = plain_summary(page.get("content") or "")
+            if body:
+                summary = body
+        except (OSError, ValueError, urllib.error.URLError):
+            pass
+    url = f"https://grokipedia.com/page/{urllib.parse.quote(slug, safe='()')}" if slug else ""
+    return {"found": bool(summary), "title": title, "summary": summary, "url": url, "slug": slug}
+
+
+def lookup_passage(quote: str) -> dict:
+    term = clean_lookup_term(quote)
+    if not term:
+        raise ValueError("Select a word or a short phrase")
+    return {"ok": True, "query": term, "dictionary": lookup_dictionary(term), "grokipedia": lookup_grokipedia(term)}
+
+
+def open_grokipedia(slug: str) -> None:
+    if not GROKIPEDIA_SLUG.fullmatch(slug):
+        raise ValueError("That article could not be opened")
+    opener = shutil.which("xdg-open")
+    if not opener:
+        raise ValueError("No browser launcher is available")
+    url = f"https://grokipedia.com/page/{urllib.parse.quote(slug, safe='()')}"
+    subprocess.Popen([opener, url], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL, start_new_session=True)
+
+
 def start_server() -> dict:
     info = server_info()
     if server_alive(info):
@@ -1625,7 +1829,7 @@ def start_server() -> dict:
 
 
 def activate_reader(pid: int, fallback_class: str = "") -> bool:
-    """Focus and fullscreen the reader on Hyprland, with Qt as the fallback elsewhere."""
+    """Focus the reader on Hyprland without putting it into fullscreen."""
     hyprctl = shutil.which("hyprctl")
     if not hyprctl or not os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
         return False
@@ -1645,21 +1849,11 @@ def activate_reader(pid: int, fallback_class: str = "") -> bool:
                 )
             if client:
                 selector = f"pid:{int(client.get('pid', pid))}"
-                # Let Qt finish its initial visibility negotiation before the
-                # compositor applies the final state. Otherwise a late Qt
-                # surface update can restore the window to the tiled layout.
-                time.sleep(0.35)
-                focused = fullscreen = None
-                for _ in range(2):
-                    focused = subprocess.run([
-                        hyprctl, "dispatch", f'hl.dsp.focus({{ window = "{selector}" }})'
-                    ], capture_output=True, text=True, timeout=1)
-                    fullscreen = subprocess.run([
-                        hyprctl, "dispatch",
-                        f'hl.dsp.window.fullscreen({{ mode = "fullscreen", action = "set", window = "{selector}" }})'
-                    ], capture_output=True, text=True, timeout=1)
-                    time.sleep(0.15)
-                return focused.returncode == 0 and fullscreen.returncode == 0
+                time.sleep(0.2)
+                focused = subprocess.run([
+                    hyprctl, "dispatch", f'hl.dsp.focus({{ window = "{selector}" }})'
+                ], capture_output=True, text=True, timeout=1)
+                return focused.returncode == 0
         except (OSError, subprocess.SubprocessError, ValueError, TypeError):
             return False
         time.sleep(0.04)
