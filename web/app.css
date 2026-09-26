@@ -177,6 +177,39 @@ input[type="range"] { width: 100%; accent-color: var(--accent); cursor: pointer;
 .search-result { border-bottom: 1px solid var(--line); border-radius: 0; }
 .search-result strong { display: block; color: var(--accent); font-size: 11px; margin-bottom: 4px; }
 .search-result span { color: var(--muted); font-size: 12px; }
+.notes-list { display: flex; flex-direction: column; gap: 8px; }
+.note-item { width: 100%; border: 0; border-radius: 12px; background: transparent; padding: 12px; color: var(--ink); text-align: left; cursor: pointer; }
+.note-item:hover { background: var(--accent-soft); }
+.note-item strong { display: block; font-family: "Noto Serif", ui-serif, serif; font-weight: 650; line-height: 1.45; }
+.note-item small { display: block; margin-top: 6px; color: var(--muted); line-height: 1.4; }
+.note-swatch { display: inline-block; width: 8px; height: 8px; margin-right: 8px; border-radius: 99px; vertical-align: baseline; }
+.highlight-bar {
+  position: absolute; z-index: 60; left: 50%; bottom: 74px; transform: translateX(-50%);
+  width: min(460px, calc(100% - 48px)); padding: 14px; display: grid; gap: 10px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow);
+}
+.highlight-bar[hidden] { display: none; }
+.note-swatch.yellow { background: #f6d96a; }
+.note-swatch.orange { background: #f0b264; }
+.note-swatch.red { background: #ef8d8d; }
+.note-swatch.green { background: #8dce9a; }
+.note-swatch.blue { background: #8eb7e8; }
+.note-swatch.purple { background: #c3a4e4; }
+.highlight-colors { display: flex; gap: 8px; }
+.swatch-button { width: 28px; height: 28px; border-radius: 99px; border: 2px solid transparent; cursor: pointer; }
+.swatch-button.active { border-color: var(--ink); }
+.swatch-button.yellow { background: #f6d96a; }
+.swatch-button.orange { background: #f0b264; }
+.swatch-button.red { background: #ef8d8d; }
+.swatch-button.green { background: #8dce9a; }
+.swatch-button.blue { background: #8eb7e8; }
+.swatch-button.purple { background: #c3a4e4; }
+.highlight-bar textarea {
+  width: 100%; resize: vertical; min-height: 64px; border: 1px solid var(--line); border-radius: 12px;
+  background: transparent; color: var(--ink); padding: 10px 12px;
+}
+.highlight-actions { display: flex; gap: 8px; align-items: center; }
+.text-button { border: 0; background: transparent; color: var(--muted); cursor: pointer; padding: 8px; }
 .helper-copy { color: var(--muted); font-size: 12px; line-height: 1.5; }
 
 .setting-section { padding: 16px 0; border-bottom: 1px solid var(--line); }

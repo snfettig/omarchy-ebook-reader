@@ -80,12 +80,29 @@ Your books are never touched. Disabling or removing the widget closes its reader
 - `/`: search the current book
 - `T`: table of contents
 - `B`: add or remove a bookmark
+- `N`: highlights and notes
 - `A`: reading appearance
 - `L`: library
 - `Esc`: show or hide the reader controls, or close an open drawer
 - `Ctrl+Shift+Q`: close the reading window
 
 Reader controls fade away while you read and return on pointer movement, a click/tap in the reading area, or `Esc`. Keyboard and edge-click page turns do not make them flash back on.
+
+Select a passage to highlight it. Pick a color, and add a note if you want one. `N` lists every highlight in the open book. Highlights are stored for EPUB books. PDF annotation stays in Xournal++.
+
+## Highlights and notes
+
+Choose the notes folder in Reader settings, the same way you choose the library folder. Point it at a directory Syncthing already syncs, for example a folder on a Synology share. The book files stay where they are and are never modified.
+
+Each machine appends to its own file, `journal-<machine-id>.jsonl`. Two devices can highlight while offline and Syncthing will not have to merge a shared file. Leaf Reader reads every `journal-*.jsonl` in that folder, including a Syncthing conflict copy, and folds them into the highlights for a book. A book is identified by the SHA-256 of the EPUB bytes, so the same file on another computer matches even when the folder path differs.
+
+Each line is one JSON object:
+
+```json
+{"v":1,"at":"2026-09-26T15:00:00Z","machine":"0123456789abcdef","host":"studio","book":"sha256:…","type":"highlight_added","id":"…","cfi":"epubcfi(…)","quote":"the passage","color":"yellow","note":""}
+```
+
+Later lines with `"type":"note_set"`, `"color_set"`, or `"highlight_removed"` update that highlight. `cfi` is an EPUB Canonical Fragment Identifier. `quote` is the selected text, so another reader can still find the passage if it does not understand CFI. Colors are `yellow`, `orange`, `red`, `green`, `blue`, and `purple`.
 
 ## Formats
 

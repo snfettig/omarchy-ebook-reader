@@ -2,10 +2,16 @@
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
+const HIGHLIGHT_FILLS = {
+  yellow: "#f6d96a", orange: "#f0b264", red: "#ef8d8d",
+  green: "#8dce9a", blue: "#8eb7e8", purple: "#c3a4e4",
+};
 const state = {
   bootstrap: null, settings: null, token: "", book: null, epub: null, rendition: null,
   location: null, bookmarks: [], saveTimer: 0, hideTimer: 0, searchGeneration: 0,
   restoreCfi: "", percentage: 0, turning: false, turnTimer: 0,
+  highlights: [], paintedCfis: [], notesReady: false, highlightColor: "yellow",
+  editingId: "", pendingCfi: "", pendingQuote: "",
 };
 
 function toast(message) {
@@ -241,6 +247,149 @@ function addBookmark() {
   persistProgress();
 }
 
+function setHighlightColor(color) {
+  state.highlightColor = HIGHLIGHT_FILLS[color] ? color : "yellow";
+  $$("#highlightColors button").forEach(button => button.classList.toggle("active", button.dataset.color === state.highlightColor));
+}
+
+function hideHighlightBar() {
+  $("#highlightBar").hidden = true;
+  state.editingId = "";
+  state.pendingCfi = "";
+  state.pendingQuote = "";
+}
+
+function showHighlightBar(mark = {}) {
+  state.editingId = mark.id || "";
+  state.pendingCfi = mark.cfi || "";
+  state.pendingQuote = mark.quote || "";
+  setHighlightColor(mark.color || state.highlightColor);
+  $("#highlightNote").value = mark.note || "";
+  $("#highlightDelete").hidden = !mark.id;
+  $("#highlightSave").textContent = mark.id ? "Save note" : "Save highlight";
+  $("#highlightHint").textContent = state.notesReady
+    ? (mark.quote || "").slice(0, 180)
+    : "Choose a notes folder in the bar’s Reader settings before highlighting.";
+  $("#highlightBar").hidden = false;
+  chromeAwake();
+}
+
+function renderNotes() {
+  const list = $("#notesList");
+  $("#notesStatus").textContent = state.notesReady
+    ? (state.highlights.length
+      ? `${state.highlights.length} highlight${state.highlights.length === 1 ? "" : "s"}`
+      : "Select a passage, then choose a color.")
+    : "Choose a notes folder in Reader settings. Syncthing can sync that folder.";
+  list.replaceChildren(...state.highlights.map(mark => {
+    const button = document.createElement("button");
+    button.className = "note-item";
+    const title = document.createElement("strong");
+    const swatch = document.createElement("span");
+    swatch.className = `note-swatch ${mark.color}`;
+    title.append(swatch, document.createTextNode(mark.quote));
+    button.append(title);
+    if (mark.note) {
+      const note = document.createElement("small");
+      note.textContent = mark.note;
+      button.append(note);
+    }
+    button.addEventListener("click", () => {
+      closeDrawers();
+      if (state.rendition) state.rendition.display(mark.cfi);
+      showHighlightBar(mark);
+    });
+    return button;
+  }));
+}
+
+function paintHighlights() {
+  if (!state.rendition?.annotations) return;
+  for (const cfi of state.paintedCfis) {
+    try { state.rendition.annotations.remove(cfi, "highlight"); } catch (_) { /* already gone */ }
+  }
+  state.paintedCfis = [];
+  for (const mark of state.highlights) {
+    try {
+      state.rendition.annotations.highlight(
+        mark.cfi,
+        { id: mark.id },
+        event => { event?.stopPropagation?.(); showHighlightBar(mark); },
+        "leaf-highlight",
+        { fill: HIGHLIGHT_FILLS[mark.color] || HIGHLIGHT_FILLS.yellow, "fill-opacity": "0.45" },
+      );
+      state.paintedCfis.push(mark.cfi);
+    } catch (_) { /* a stale location cannot be painted */ }
+  }
+}
+
+async function loadHighlights() {
+  state.highlights = [];
+  if (!state.book || !state.rendition) {
+    renderNotes();
+    return;
+  }
+  try {
+    const payload = await api(`/api/annotations/${encodeURIComponent(state.book.id)}`);
+    state.notesReady = Boolean(payload.notesReady);
+    state.highlights = Array.isArray(payload.highlights) ? payload.highlights : [];
+  } catch (error) {
+    toast(error.message);
+  }
+  renderNotes();
+  paintHighlights();
+}
+
+async function saveHighlight(event) {
+  event.preventDefault();
+  if (!state.book) return;
+  if (!state.notesReady) {
+    toast("Choose a notes folder in Reader settings");
+    return;
+  }
+  const editingId = state.editingId;
+  const note = $("#highlightNote").value;
+  try {
+    let payload;
+    if (editingId) {
+      await api(`/api/annotations/${encodeURIComponent(state.book.id)}`, {
+        method: "POST", body: JSON.stringify({ op: "note", id: editingId, note }),
+      });
+      payload = await api(`/api/annotations/${encodeURIComponent(state.book.id)}`, {
+        method: "POST", body: JSON.stringify({ op: "color", id: editingId, color: state.highlightColor }),
+      });
+    } else {
+      if (!state.pendingCfi || !state.pendingQuote) return;
+      payload = await api(`/api/annotations/${encodeURIComponent(state.book.id)}`, {
+        method: "POST",
+        body: JSON.stringify({
+          op: "add", cfi: state.pendingCfi, quote: state.pendingQuote,
+          color: state.highlightColor, note,
+        }),
+      });
+    }
+    state.highlights = payload.highlights || [];
+    renderNotes();
+    paintHighlights();
+    hideHighlightBar();
+    toast(editingId ? "Note saved" : "Highlighted");
+  } catch (error) { toast(error.message); }
+}
+
+async function deleteHighlight() {
+  if (!state.book || !state.editingId) return;
+  try {
+    const payload = await api(`/api/annotations/${encodeURIComponent(state.book.id)}`, {
+      method: "POST", body: JSON.stringify({ op: "remove", id: state.editingId }),
+    });
+    state.highlights = payload.highlights || [];
+    renderNotes();
+    paintHighlights();
+    hideHighlightBar();
+    toast("Highlight removed");
+  } catch (error) { toast(error.message); }
+}
+
 function removeBookmark(index) {
   state.bookmarks.splice(index, 1);
   renderBookmarks();
@@ -259,6 +408,9 @@ async function openBook(bookId) {
   closeDrawers();
   const book = state.bootstrap.books.find(candidate => candidate.id === bookId);
   if (!book) return showError(new Error("That book is no longer in the selected library folder."));
+  state.paintedCfis = [];
+  state.highlights = [];
+  hideHighlightBar();
   if (state.rendition) state.rendition.destroy();
   if (state.epub) state.epub.destroy();
   state.book = book;
@@ -304,12 +456,14 @@ async function openBook(bookId) {
     });
     applyAppearance(false);
     state.rendition.on("relocated", onRelocated);
+    state.rendition.on("selected", onSelected);
     state.rendition.on("rendered", (_, view) => {
       view.contents.on("keydown", onReaderKey);
       view.contents.on("click", chromeAwake);
       view.contents.on("mousemove", chromeAwake);
     });
     await state.rendition.display(progress.cfi || undefined);
+    await loadHighlights();
     state.epub.locations.generate(1400).catch(() => {});
     await state.epub.loaded.navigation;
     renderToc();
@@ -372,6 +526,15 @@ function navigate(direction) {
   }, 540);
 }
 
+function onSelected(cfiRange) {
+  if (!cfiRange || !state.epub) return;
+  state.epub.getRange(cfiRange).then(range => {
+    const quote = String(range?.toString?.() || "").replace(/\s+/g, " ").trim();
+    if (!quote) return;
+    showHighlightBar({ cfi: cfiRange, quote, color: state.highlightColor });
+  }).catch(() => {});
+}
+
 function onReaderKey(event) { handleKey(event); }
 function handleKey(event) {
   if (event.ctrlKey || event.metaKey || event.altKey) return;
@@ -386,6 +549,7 @@ function handleKey(event) {
   if (event.key === "ArrowLeft" || event.key === "PageUp") { event.preventDefault(); navigate(-1); }
   else if (event.key === "ArrowRight" || event.key === "PageDown" || event.key === " ") { event.preventDefault(); navigate(1); }
   else if (event.key === "/") openDrawer("#searchDrawer");
+  else if (event.key.toLowerCase() === "n") openDrawer("#notesDrawer");
   else if (event.key.toLowerCase() === "b") addBookmark();
   else if (event.key.toLowerCase() === "a") openDrawer("#appearanceDrawer");
   else if (event.key.toLowerCase() === "l") openDrawer("#libraryDrawer");
@@ -425,6 +589,12 @@ function bindControls() {
   $("#libraryButton").addEventListener("click", () => openDrawer("#libraryDrawer"));
   $("#tocButton").addEventListener("click", () => openDrawer("#tocDrawer"));
   $("#searchButton").addEventListener("click", () => openDrawer("#searchDrawer"));
+  $("#notesButton").addEventListener("click", () => openDrawer("#notesDrawer"));
+  $("#highlightBar").addEventListener("submit", saveHighlight);
+  $("#highlightCancel").addEventListener("click", hideHighlightBar);
+  $("#highlightDelete").addEventListener("click", deleteHighlight);
+  $$("#highlightColors button").forEach(button => button.addEventListener("click", () => setHighlightColor(button.dataset.color)));
+  setHighlightColor("yellow");
   $("#appearanceButton").addEventListener("click", () => openDrawer("#appearanceDrawer"));
   $("#bookmarkButton").addEventListener("click", addBookmark);
   $("#errorLibraryButton").addEventListener("click", () => openDrawer("#libraryDrawer"));
@@ -472,6 +642,7 @@ async function initialize() {
     state.token = "";
     sessionStorage.removeItem("leafReaderToken");
     state.settings = state.bootstrap.settings;
+    state.notesReady = Boolean(state.bootstrap.notesReady);
     applyAppearance(false);
     const requested = new URLSearchParams(location.search).get("book");
     const bookId = requested || state.bootstrap.lastBookId || state.bootstrap.books[0]?.id;

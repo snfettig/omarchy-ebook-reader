@@ -24,6 +24,7 @@
       </div>
       <div class="toolbar-side toolbar-right">
         <button id="searchButton" class="icon-button" title="Search (/)" aria-label="Search book">⌕</button>
+        <button id="notesButton" class="icon-button" title="Highlights and notes (N)" aria-label="Highlights and notes">✎</button>
         <button id="bookmarkButton" class="icon-button" title="Bookmark (B)" aria-label="Bookmark this page">◇</button>
         <button id="appearanceButton" class="icon-button" title="Reading settings (A)" aria-label="Reading settings">Aa</button>
       </div>
@@ -86,6 +87,15 @@
         <div class="section-title"><span>Bookmarks</span><span id="bookmarkCount">0</span></div>
         <div id="bookmarkList" class="bookmark-list"></div>
       </section>
+    </aside>
+
+    <aside id="notesDrawer" class="drawer" aria-label="Highlights and notes" aria-hidden="true">
+      <div class="drawer-header">
+        <div><span class="eyebrow">IN THIS BOOK</span><h1>Notes</h1></div>
+        <button class="icon-button close-drawer" aria-label="Close notes">×</button>
+      </div>
+      <p id="notesStatus" class="helper-copy">Select a passage, then choose a color.</p>
+      <div id="notesList" class="notes-list"></div>
     </aside>
 
     <aside id="searchDrawer" class="drawer" aria-label="Search this book" aria-hidden="true">
@@ -161,8 +171,26 @@
         </div>
       </section>
 
-      <p class="shortcut-help">← → turn pages · / search · B bookmark · A appearance · L library</p>
+      <p class="shortcut-help">← → turn pages · / search · N notes · B bookmark · A appearance · L library</p>
     </aside>
+
+    <form id="highlightBar" class="highlight-bar" hidden>
+      <div id="highlightColors" class="highlight-colors" role="group" aria-label="Highlight color">
+        <button type="button" data-color="yellow" class="swatch-button yellow" aria-label="Yellow"></button>
+        <button type="button" data-color="orange" class="swatch-button orange" aria-label="Orange"></button>
+        <button type="button" data-color="red" class="swatch-button red" aria-label="Red"></button>
+        <button type="button" data-color="green" class="swatch-button green" aria-label="Green"></button>
+        <button type="button" data-color="blue" class="swatch-button blue" aria-label="Blue"></button>
+        <button type="button" data-color="purple" class="swatch-button purple" aria-label="Purple"></button>
+      </div>
+      <textarea id="highlightNote" rows="3" maxlength="8000" placeholder="Add a note, if you want one"></textarea>
+      <div class="highlight-actions">
+        <button type="submit" id="highlightSave" class="primary-button">Save highlight</button>
+        <button type="button" id="highlightDelete" class="text-button">Remove</button>
+        <button type="button" id="highlightCancel" class="text-button">Cancel</button>
+      </div>
+      <p id="highlightHint" class="helper-copy"></p>
+    </form>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
   </div>

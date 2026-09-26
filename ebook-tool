@@ -86,6 +86,16 @@ THEMES = {"paper", "sepia", "night", "slate"}
 FONTS = {"serif", "sans", "publisher"}
 FLOWS = {"paginated", "scrolled"}
 CONVERSION_LOCK = threading.Lock()
+ANNOTATION_LOCK = threading.Lock()
+HIGHLIGHT_COLORS = {"yellow", "orange", "red", "green", "blue", "purple"}
+MAX_QUOTE_CHARS = 4000
+MAX_NOTE_CHARS = 8000
+MAX_ANNOTATION_ID_CHARS = 80
+MAX_JOURNAL_BYTES = 32 * 1024 * 1024
+MAX_JOURNAL_LINE_BYTES = 64 * 1024
+MAX_HIGHLIGHTS = 2000
+_HASH_CACHE: dict[tuple[str, int, int], str] = {}
+_ANNOTATION_COUNTER = 0
 
 
 def utc_now() -> str:
@@ -200,6 +210,8 @@ def default_settings() -> dict:
         "pageTurn": True,
         "showClock": False,
         "sort": "recent",
+        "notesFolder": "",
+        "notesMachineId": "",
     }
 
 
@@ -244,6 +256,19 @@ def validate_settings(value: dict) -> dict:
     result["pageTurn"] = boolean_setting(result.get("pageTurn"), True)
     result["showClock"] = boolean_setting(result.get("showClock"), False)
     result["sort"] = result.get("sort") if result.get("sort") in {"recent", "title", "author", "added"} else "recent"
+    raw_notes = bounded_text(result.get("notesFolder", ""), MAX_PATH_CHARS, "")
+    notes_folder = ""
+    if raw_notes:
+        expanded = bounded_text(os.path.expandvars(os.path.expanduser(raw_notes)), MAX_PATH_CHARS, "")
+        try:
+            candidate = Path(expanded).resolve()
+        except (OSError, RuntimeError):
+            candidate = None
+        if candidate is not None and candidate.is_dir():
+            notes_folder = str(candidate)
+    result["notesFolder"] = notes_folder
+    machine = bounded_text(result.get("notesMachineId", ""), 16, "")
+    result["notesMachineId"] = machine if re.fullmatch(r"[0-9a-f]{16}", machine) else ""
     return result
 
 
@@ -844,6 +869,222 @@ def reader_settings() -> dict:
     return {key: current[key] for key in allowed}
 
 
+def notes_dir() -> Path | None:
+    folder = settings().get("notesFolder") or ""
+    if not folder:
+        return None
+    try:
+        path = Path(folder).resolve()
+    except (OSError, RuntimeError):
+        return None
+    if not path.is_dir():
+        return None
+    return path
+
+
+def ensure_notes_machine_id() -> str:
+    current = settings()
+    machine = current.get("notesMachineId") or ""
+    if re.fullmatch(r"[0-9a-f]{16}", machine):
+        return machine
+    machine = secrets.token_hex(8)
+    save_settings({"notesMachineId": machine})
+    return machine
+
+
+def file_sha256(path: Path) -> str:
+    info = path.stat()
+    key = (str(path), info.st_size, info.st_mtime_ns)
+    cached = _HASH_CACHE.get(key)
+    if cached:
+        return cached
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    value = digest.hexdigest()
+    _HASH_CACHE[key] = value
+    return value
+
+
+def book_content_ref(book: dict) -> str:
+    return "sha256:" + file_sha256(readable_file(book))
+
+
+def journal_files(folder: Path) -> list[Path]:
+    found = []
+    try:
+        entries = list(folder.iterdir())
+    except OSError:
+        return found
+    for entry in entries:
+        name = entry.name
+        if not name.startswith("journal-") or not name.endswith(".jsonl"):
+            continue
+        try:
+            info = entry.lstat()
+        except OSError:
+            continue
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+            continue
+        if info.st_size > MAX_JOURNAL_BYTES:
+            continue
+        found.append(entry)
+    found.sort(key=lambda item: item.name)
+    return found
+
+
+def read_annotation_events(book_ref: str) -> list[dict]:
+    folder = notes_dir()
+    if folder is None:
+        return []
+    collected = []
+    for path in journal_files(folder):
+        try:
+            lines = path.read_bytes().splitlines()
+        except OSError:
+            continue
+        for index, raw in enumerate(lines):
+            if len(raw) > MAX_JOURNAL_LINE_BYTES:
+                continue
+            try:
+                event = json.loads(raw)
+            except (ValueError, UnicodeDecodeError):
+                continue
+            if not isinstance(event, dict) or event.get("book") != book_ref:
+                continue
+            collected.append((bounded_text(event.get("at"), 64), path.name, index, event))
+    collected.sort(key=lambda item: (item[0], item[1], item[2]))
+    return [event for _, _, _, event in collected]
+
+
+def highlights_for(book_ref: str) -> list[dict]:
+    marks: dict[str, dict] = {}
+    order: list[str] = []
+    for event in read_annotation_events(book_ref):
+        kind = event.get("type")
+        ident = bounded_text(event.get("id"), MAX_ANNOTATION_ID_CHARS)
+        if not ident:
+            continue
+        if kind == "highlight_added":
+            cfi = bounded_text(event.get("cfi"), MAX_CFI_CHARS)
+            quote = bounded_text(event.get("quote"), MAX_QUOTE_CHARS).strip()
+            color = event.get("color") if event.get("color") in HIGHLIGHT_COLORS else "yellow"
+            if not cfi or not quote or ident in marks:
+                continue
+            marks[ident] = {
+                "id": ident,
+                "cfi": cfi,
+                "quote": quote,
+                "color": color,
+                "note": bounded_text(event.get("note"), MAX_NOTE_CHARS),
+                "created": bounded_text(event.get("at"), 64),
+            }
+            order.append(ident)
+        elif kind == "note_set" and ident in marks:
+            marks[ident]["note"] = bounded_text(event.get("note"), MAX_NOTE_CHARS)
+        elif kind == "color_set" and ident in marks and event.get("color") in HIGHLIGHT_COLORS:
+            marks[ident]["color"] = event["color"]
+        elif kind == "highlight_removed" and ident in marks:
+            del marks[ident]
+            order = [item for item in order if item != ident]
+    return [marks[ident] for ident in order if ident in marks][:MAX_HIGHLIGHTS]
+
+
+def append_annotation_event(event: dict) -> None:
+    folder = notes_dir()
+    if folder is None:
+        raise ValueError("Choose a notes folder before highlighting")
+    machine = ensure_notes_machine_id()
+    record = {
+        "v": 1,
+        "at": utc_now(),
+        "machine": machine,
+        "host": bounded_text(socket.gethostname(), 64, "unknown"),
+        **event,
+    }
+    line = (json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
+    if len(line) > MAX_JOURNAL_LINE_BYTES:
+        raise ValueError("That highlight is too large")
+    path = folder / f"journal-{machine}.jsonl"
+    if path.parent.resolve() != folder:
+        raise ValueError("Notes folder is not usable")
+    flags = os.O_APPEND | os.O_CREAT | os.O_WRONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(path, flags, 0o644)
+    except OSError as error:
+        raise ValueError("The notes journal could not be opened") from error
+    try:
+        os.write(descriptor, line)
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def new_annotation_id(machine: str) -> str:
+    global _ANNOTATION_COUNTER
+    _ANNOTATION_COUNTER += 1
+    return f"{machine}-{time.time_ns()}-{_ANNOTATION_COUNTER}"
+
+
+def record_annotation(book: dict, payload: dict) -> list[dict]:
+    if notes_dir() is None:
+        raise ValueError("Choose a notes folder before highlighting")
+    operation = bounded_text(payload.get("op"), 16)
+    book_ref = book_content_ref(book)
+    machine = ensure_notes_machine_id()
+    with ANNOTATION_LOCK:
+        if operation == "add":
+            cfi = bounded_text(payload.get("cfi"), MAX_CFI_CHARS)
+            quote = bounded_text(payload.get("quote"), MAX_QUOTE_CHARS).strip()
+            color = payload.get("color") if payload.get("color") in HIGHLIGHT_COLORS else "yellow"
+            note = bounded_text(payload.get("note"), MAX_NOTE_CHARS)
+            if not cfi or not quote:
+                raise ValueError("Select some text to highlight")
+            ident = new_annotation_id(machine)
+            append_annotation_event({
+                "book": book_ref,
+                "type": "highlight_added",
+                "id": ident,
+                "cfi": cfi,
+                "quote": quote,
+                "color": color,
+                "note": note,
+            })
+        elif operation in {"note", "color", "remove"}:
+            ident = bounded_text(payload.get("id"), MAX_ANNOTATION_ID_CHARS)
+            if not ident or not any(mark["id"] == ident for mark in highlights_for(book_ref)):
+                raise ValueError("That highlight is no longer in the notes")
+            if operation == "note":
+                append_annotation_event({
+                    "book": book_ref,
+                    "type": "note_set",
+                    "id": ident,
+                    "note": bounded_text(payload.get("note"), MAX_NOTE_CHARS),
+                })
+            elif operation == "color":
+                color = payload.get("color")
+                if color not in HIGHLIGHT_COLORS:
+                    raise ValueError("Choose a highlight color")
+                append_annotation_event({
+                    "book": book_ref,
+                    "type": "color_set",
+                    "id": ident,
+                    "color": color,
+                })
+            else:
+                append_annotation_event({
+                    "book": book_ref,
+                    "type": "highlight_removed",
+                    "id": ident,
+                })
+        else:
+            raise ValueError("Unknown notes action")
+        return highlights_for(book_ref)
+
+
 def library_payload(
     force: bool = False, query: str = "", limit: int = 0,
     deadline_seconds: float = MAX_SCAN_SECONDS, surface: str = "shell",
@@ -868,6 +1109,7 @@ def library_payload(
         "truncated": truncated,
         "lastBookId": state.get("lastBookId", ""),
         "settings": settings() if surface == "shell" else reader_settings(),
+        "notesReady": notes_dir() is not None,
     }
     if surface == "shell":
         payload["starterLibrary"] = str(STARTER_LIBRARY_DIR)
@@ -1142,6 +1384,25 @@ class ReaderHandler(BaseHTTPRequestHandler):
                 return
             self.send_bytes(cover.read_bytes(), "image/png", cache="private, max-age=86400")
             return
+        if route.startswith("/api/annotations/"):
+            book_id = route.rsplit("/", 1)[-1]
+            if not re.fullmatch(r"[0-9a-f]{20}", book_id):
+                self.send_json({"ok": False, "error": "Book not found"}, 404)
+                return
+            book = self.server.find_book(book_id)
+            if not book:
+                self.send_json({"ok": False, "error": "Book not found"}, 404)
+                return
+            ready = notes_dir() is not None
+            highlights = []
+            if ready:
+                try:
+                    highlights = highlights_for(book_content_ref(book))
+                except (OSError, RuntimeError) as exc:
+                    self.send_json({"ok": False, "error": bounded_text(str(exc), 1024, "Notes could not be read")}, 422)
+                    return
+            self.send_json({"ok": True, "notesReady": ready, "highlights": highlights})
+            return
         relative = "index.html" if route in {"/", "/reader"} else route.lstrip("/")
         target = (WEB_DIR / relative).resolve()
         try:
@@ -1188,6 +1449,25 @@ class ReaderHandler(BaseHTTPRequestHandler):
                 self.send_json({"ok": False, "error": "Reading state has reached its safe size limit"}, 422)
                 return
             self.send_json({"ok": True, "progress": updated})
+            return
+        if route.startswith("/api/annotations/"):
+            book_id = route.rsplit("/", 1)[-1]
+            if not re.fullmatch(r"[0-9a-f]{20}", book_id):
+                self.send_json({"ok": False, "error": "Book not found"}, 404)
+                return
+            book = self.server.find_book(book_id)
+            if not book:
+                self.send_json({"ok": False, "error": "Book not found"}, 404)
+                return
+            try:
+                highlights = record_annotation(book, payload)
+            except ValueError as error:
+                self.send_json({"ok": False, "error": str(error)}, 422)
+                return
+            except (OSError, RuntimeError):
+                self.send_json({"ok": False, "error": "The notes folder could not be updated"}, 422)
+                return
+            self.send_json({"ok": True, "notesReady": True, "highlights": highlights})
             return
         if route == "/api/settings":
             allowed = {"fontSize", "fontFamily", "lineHeight", "pageWidth", "theme", "flow", "pageTurn", "showClock", "sort"}
@@ -1472,8 +1752,11 @@ def parser() -> argparse.ArgumentParser:
     opened.add_argument("book_id", nargs="?", default="")
     choose = sub.add_parser("choose-folder")
     choose.add_argument("--folder")
+    choose_notes = sub.add_parser("choose-notes-folder")
+    choose_notes.add_argument("--folder")
     config = sub.add_parser("settings")
     config.add_argument("--library-folder")
+    config.add_argument("--notes-folder")
     config.add_argument("--font-size", type=int)
     config.add_argument("--font-family", choices=sorted(FONTS))
     config.add_argument("--line-height", type=float)
@@ -1531,9 +1814,31 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         print(json.dumps({"ok": True, "settings": save_settings({"libraryFolder": str(folder)})}))
         return 0
+    if args.command == "choose-notes-folder":
+        chosen = args.folder
+        if not chosen:
+            picker = shutil.which("zenity")
+            if not picker:
+                print(json.dumps({"ok": False, "error": "Folder picker is unavailable; enter the path manually."}))
+                return 1
+            run = subprocess.run(
+                [picker, "--file-selection", "--directory", "--title=Choose where highlights and notes are stored"],
+                capture_output=True, text=True,
+            )
+            if run.returncode != 0:
+                print(json.dumps({"ok": False, "cancelled": True}))
+                return 0
+            chosen = run.stdout.strip()
+        folder = Path(os.path.expanduser(chosen)).resolve()
+        if not folder.is_dir():
+            print(json.dumps({"ok": False, "error": "That folder does not exist."}))
+            return 1
+        print(json.dumps({"ok": True, "settings": save_settings({"notesFolder": str(folder)})}))
+        return 0
     if args.command == "settings":
         changes = {}
-        for key, dest in [("library_folder", "libraryFolder"), ("font_size", "fontSize"),
+        for key, dest in [("library_folder", "libraryFolder"), ("notes_folder", "notesFolder"),
+                          ("font_size", "fontSize"),
                           ("font_family", "fontFamily"), ("line_height", "lineHeight"),
                           ("page_width", "pageWidth"), ("theme", "theme"),
                           ("flow", "flow"), ("sort", "sort")]:
@@ -1545,6 +1850,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.page_turn is not None:
             changes["pageTurn"] = args.page_turn == "true"
         if args.library_folder and not Path(os.path.expanduser(args.library_folder)).is_dir():
+            print(json.dumps({"ok": False, "error": "That folder does not exist."}))
+            return 1
+        if args.notes_folder is not None and args.notes_folder != "" and not Path(os.path.expanduser(args.notes_folder)).is_dir():
             print(json.dumps({"ok": False, "error": "That folder does not exist."}))
             return 1
         print(json.dumps({"ok": True, "settings": save_settings(changes)}))
@@ -1561,6 +1869,8 @@ def main(argv: list[str] | None = None) -> int:
             "ok": WEB_DIR.is_dir() and (WEB_DIR / "vendor/epub.min.js").is_file(),
             "libraryFolder": cfg["libraryFolder"],
             "libraryExists": Path(cfg["libraryFolder"]).is_dir(),
+            "notesFolder": cfg["notesFolder"],
+            "notesReady": notes_dir() is not None,
             "starterLibrary": str(STARTER_LIBRARY_DIR),
             "starterBooks": len([path for path in STARTER_LIBRARY_DIR.glob("*.epub") if path.is_file()]),
             "books": len(scan_library()),

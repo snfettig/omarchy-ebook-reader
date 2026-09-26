@@ -120,6 +120,13 @@ Panel {
     actionProc.running = true
   }
 
+  function chooseNotesFolder() {
+    if (actionProc.running) return
+    actionOutput = ""
+    actionProc.command = [helperPath, "choose-notes-folder"]
+    actionProc.running = true
+  }
+
   function saveSetting(args) {
     if (actionProc.running) return
     actionOutput = ""
@@ -176,7 +183,7 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      blocked: searchField.activeFocus || folderField.activeFocus
+      blocked: searchField.activeFocus || folderField.activeFocus || notesField.activeFocus
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
 
@@ -447,6 +454,31 @@ Panel {
                 }
               }
               Text { text: "Scans subfolders automatically. Your files never leave this computer."; color: root.muted; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
+            }
+
+            Column {
+              width: parent.width; spacing: Style.space(7)
+              Text { text: "NOTES FOLDER"; color: root.muted; font.family: root.fontFamily; font.pixelSize: Style.font.caption; font.bold: true; font.letterSpacing: 1 }
+              Row {
+                width: parent.width; spacing: Style.space(8)
+                QQC.TextField {
+                  id: notesField
+                  width: parent.width - notesBrowseButton.width - parent.spacing
+                  height: Style.space(42)
+                  text: String(root.readerSettings.notesFolder || "")
+                  color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.body
+                  leftPadding: Style.space(12); rightPadding: Style.space(12)
+                  placeholderText: "Syncthing folder for highlights and notes"
+                  background: Rectangle { radius: Style.cornerRadius; color: root.subtle; border.width: notesField.activeFocus ? 1 : 0; border.color: root.accent }
+                  onAccepted: root.saveSetting(["--notes-folder", text.trim()])
+                }
+                PanelActionButton {
+                  id: notesBrowseButton
+                  iconText: "󰉋"; tooltipText: "Choose notes folder"; foreground: root.foreground; hoverColor: root.accent; bordered: true
+                  onClicked: root.chooseNotesFolder()
+                }
+              }
+              Text { text: "Each machine appends its own journal here. Point this at the folder Syncthing already syncs."; color: root.muted; font.family: root.fontFamily; font.pixelSize: Style.font.caption; wrapMode: Text.WordWrap; width: parent.width }
             }
 
             Rectangle { width: parent.width; height: 1; color: root.subtle }

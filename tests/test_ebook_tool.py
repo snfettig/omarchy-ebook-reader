@@ -266,6 +266,56 @@ class LeafReaderTests(unittest.TestCase):
             make_epub(personal / "Mine.epub")
             self.assertEqual(leaf.default_library(), str(personal))
 
+    def test_highlights_append_per_machine_and_fold_together(self):
+        notes = Path(self.temp.name) / "Notes"
+        notes.mkdir()
+        make_epub(self.library / "Book.epub", "Noted")
+        book = leaf.scan_library()[0]
+        leaf.save_settings({"notesFolder": str(notes)})
+        saved = leaf.record_annotation(book, {
+            "op": "add", "cfi": "epubcfi(/6/4!/4,/1:0,/1:11)", "quote": "In the beginning",
+            "color": "green", "note": "first line",
+        })
+        self.assertEqual(saved[0]["quote"], "In the beginning")
+        self.assertEqual(saved[0]["color"], "green")
+        self.assertEqual(saved[0]["note"], "first line")
+        machine = leaf.settings()["notesMachineId"]
+        own_journal = notes / f"journal-{machine}.jsonl"
+        self.assertTrue(own_journal.is_file())
+        other = notes / "journal-abcdefabcdefabcd.jsonl"
+        other.write_text(
+            json.dumps({
+                "v": 1, "at": "2026-09-26T00:00:00Z", "machine": "abcdefabcdefabcd",
+                "book": leaf.book_content_ref(book), "type": "highlight_added",
+                "id": "other-1", "cfi": "epubcfi(/6/8)", "quote": "From the other machine",
+                "color": "blue", "note": "",
+            }) + "\nnot json\n",
+            encoding="utf-8",
+        )
+        folded = leaf.highlights_for(leaf.book_content_ref(book))
+        self.assertEqual([mark["quote"] for mark in folded], ["From the other machine", "In the beginning"])
+        before = other.read_bytes()
+        leaf.record_annotation(book, {"op": "note", "id": saved[0]["id"], "note": "revised"})
+        leaf.record_annotation(book, {"op": "remove", "id": "other-1"})
+        self.assertEqual(other.read_bytes(), before)
+        remaining = leaf.highlights_for(leaf.book_content_ref(book))
+        self.assertEqual([mark["id"] for mark in remaining], [saved[0]["id"]])
+        self.assertEqual(remaining[0]["note"], "revised")
+        link = notes / f"journal-{machine}-link.jsonl"
+        link.symlink_to(own_journal)
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(len(leaf.journal_files(notes)), 2)
+
+    def test_highlights_require_a_real_notes_folder(self):
+        make_epub(self.library / "Book.epub")
+        book = leaf.scan_library()[0]
+        with self.assertRaises(ValueError):
+            leaf.record_annotation(book, {"op": "add", "cfi": "epubcfi(/6/2)", "quote": "Hello"})
+        self.assertEqual(leaf.main(["settings", "--notes-folder", str(Path(self.temp.name) / "missing")]), 1)
+        self.assertEqual(leaf.reader_settings().keys() & {"notesFolder", "notesMachineId"}, set())
+        same = self.library / "Book.epub"
+        self.assertEqual(leaf.file_sha256(same), leaf.file_sha256(same))
+
     def test_progress_and_last_book_are_atomic_and_bounded(self):
         make_epub(self.library / "Book.epub")
         book = leaf.scan_library()[0]
